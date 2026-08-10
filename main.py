@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import database
+from datetime import date
 
 app = FastAPI(title="Finance Tracker API")
 
@@ -45,7 +46,7 @@ def get_accounts(db: Session = Depends(get_db)):
 def create_category(cat: database.CategoryCreate, db: Session = Depends(get_db)):
     db_cat = database.Category(
         name=cat.name,
-        emoji=cat.icon,
+        emoji=cat.icon, 
         color=cat.color
     )
     db.add(db_cat)
@@ -54,13 +55,17 @@ def create_category(cat: database.CategoryCreate, db: Session = Depends(get_db))
     return db_cat
 
 @app.get("/categories")
-def get_categories(db: Session = Depends(get_db)):
+def get_categories(month: int = None, db: Session = Depends(get_db)):
     categories = db.query(database.Category).all()
+    
+    if month is None:
+        month = date.today().month
     
     result = []
     for cat in categories:
         total_spent = db.query(func.sum(database.Transaction.amount))\
             .filter(database.Transaction.category_id == cat.id)\
+            .filter(func.strftime('%m', database.Transaction.created_at) == f"{month:02d}")\
             .filter(database.Transaction.type == "expense")\
             .scalar() or 0.0
         
@@ -69,7 +74,7 @@ def get_categories(db: Session = Depends(get_db)):
             "name": cat.name,
             "emoji": cat.emoji,
             "color": cat.color,
-            "amount": total_spent 
+            "amount": total_spent
         })
     return result
 
@@ -100,3 +105,18 @@ def create_transaction(tx: database.TransactionCreate, db: Session = Depends(get
         "transaction_id": db_tx.id,
         "new_balance": account.balance
     }
+
+@app.get("/stats/weekly")
+def get_weekly_stats(db: Session = Depends(get_db)):
+    days_data = []
+    days_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    
+    for i in range(7):
+        day_stats = {
+            "label": days_names[i],
+            "segments": [],
+            "transactions": [] 
+        }
+        days_data.append(day_stats)
+        
+    return days_data
