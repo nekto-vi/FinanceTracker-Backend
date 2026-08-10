@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship # Добавили relationship
+from sqlalchemy.orm import sessionmaker, relationship
 from pydantic import BaseModel
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./finance.db"
@@ -14,18 +14,16 @@ class Category(Base):
     name = Column(String)
     emoji = Column(String)
     color = Column(String)
-    # Связь: говорим базе, что у категории есть транзакции
     transactions = relationship("Transaction", back_populates="category")
 
 class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(Integer, primary_key=True, index=True)
     amount = Column(Float, nullable=False)
-    category_id = Column(Integer, ForeignKey("categories.id")) # Ссылка на категорию
+    category_id = Column(Integer, ForeignKey("categories.id"))
     
     category = relationship("Category", back_populates="transactions")
 
-# Схемы Pydantic
 class CategoryCreate(BaseModel):
     name: str
     icon: str
