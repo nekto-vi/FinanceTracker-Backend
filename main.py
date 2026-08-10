@@ -108,15 +108,19 @@ def create_transaction(tx: database.TransactionCreate, db: Session = Depends(get
     }
 
 @app.get("/stats/weekly")
-def get_weekly_stats(db: Session = Depends(get_db)):
-    today = datetime.utcnow().date()
-    start_of_week = today - timedelta(days=today.weekday())
+def get_weekly_stats(start_date: str = None, db: Session = Depends(get_db)):
+    if start_date:
+        dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+    else:
+        dt = datetime.utcnow().date()
+    
+    monday = dt - timedelta(days=dt.weekday())
     
     day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     result = []
 
     for i in range(7):
-        current_day = start_of_week + timedelta(days=i)
+        current_day = monday + timedelta(days=i)
 
         txs = db.query(database.Transaction).filter(
             func.date(database.Transaction.created_at) == current_day,
@@ -150,8 +154,16 @@ def get_weekly_stats(db: Session = Depends(get_db)):
 
         result.append({
             "label": day_names[i],
-            "segments": segments,
-            "transactions": transactions_list
+            "date": current_day.strftime("%d.%m"),
+            "segments": [{"categoryId": str(cid), "amount": d["amount"], "color": d["color"]} 
+                        for cid, d in segments_map.items()],
+            "transactions": [{
+                "id": str(t.id),
+                "categoryName": t.category.name if t.category else "Без категории",
+                "amount": t.amount,
+                "color": t.category.color if t.category else "#8E8E93",
+                "time": t.created_at.strftime("%H:%M")
+            } for t in txs]
         })
         
     return result
