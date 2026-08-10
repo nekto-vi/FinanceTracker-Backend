@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import database
-from datetime import date
+
+from datetime import date, datetime, timedelta
 
 app = FastAPI(title="Finance Tracker API")
 
@@ -108,15 +109,70 @@ def create_transaction(tx: database.TransactionCreate, db: Session = Depends(get
 
 @app.get("/stats/weekly")
 def get_weekly_stats(db: Session = Depends(get_db)):
-    days_data = []
-    days_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    today = datetime.utcnow().date()
+    start_of_week = today - timedelta(days=today.weekday())
     
+    day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    result = []
+
     for i in range(7):
-        day_stats = {
-            "label": days_names[i],
-            "segments": [],
-            "transactions": [] 
-        }
-        days_data.append(day_stats)
+        current_day = start_of_week + timedelta(days=i)
+
+        txs = db.query(database.Transaction).filter(
+            func.date(database.Transaction.created_at) == current_day,
+            database.Transaction.type == "expense"
+        ).all()
+
+        segments_map = {}
+        for t in txs:
+            cat_color = t.category.color if t.category else "#D1D1D6"
+            cat_id = t.category_id
+            
+            if cat_id not in segments_map:
+                segments_map[cat_id] = {"amount": 0, "color": cat_color}
+            
+            segments_map[cat_id]["amount"] += t.amount
+
+        segments = [
+            {"categoryId": str(cid), "amount": data["amount"], "color": data["color"]}
+            for cid, data in segments_map.items()
+        ]
+
+        transactions_list = [{
+            "id": str(t.id),
+            "categoryId": str(t.category_id),
+            "categoryName": t.category.name if t.category else "Без категории",
+            "amount": t.amount,
+            "color": t.category.color if t.category else "#8E8E93",
+            "note": f"Трата №{t.id}", 
+            "time": t.created_at.strftime("%H:%M")
+        } for t in txs]
+
+        result.append({
+            "label": day_names[i],
+            "segments": segments,
+            "transactions": transactions_list
+        })
         
-    return days_data
+    return result
+
+@app.get("/stats/summary")
+def get_monthly_summary(month: int = None, db: Session = Depends(get_db)):
+    if month is None:
+        month = date.today().month
+
+    total_income = db.query(func.sum(database.Transaction.amount))\
+        .filter(func.strftime('%m', database.Transaction.created_at) == f"{month:02d}")\
+        .filter(database.Transaction.type == "income")\
+        .scalar() or 0.0
+
+    total_expense = db.query(func.sum(database.Transaction.amount))\
+        .filter(func.strftime('%m', database.Transaction.created_at) == f"{month:02d}")\
+        .filter(database.Transaction.type == "expense")\
+        .scalar() or 0.0
+
+    return {
+        "profit": total_income - total_expense,
+        "total_income": total_income,
+        "total_expense": total_expense
+    }
