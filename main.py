@@ -56,17 +56,22 @@ def create_category(cat: database.CategoryCreate, db: Session = Depends(get_db))
     return db_cat
 
 @app.get("/categories")
-def get_categories(month: int = None, db: Session = Depends(get_db)):
+def get_categories(month: int = None, year: int = None, db: Session = Depends(get_db)):
     categories = db.query(database.Category).all()
     
-    if month is None:
-        month = date.today().month
+    today = date.today()
+    month = month or today.month
+    year = year or today.year # Добавили год
+    
+    month_str = f"{month:02d}"
+    year_str = str(year)
     
     result = []
     for cat in categories:
         total_spent = db.query(func.sum(database.Transaction.amount))\
             .filter(database.Transaction.category_id == cat.id)\
-            .filter(func.strftime('%m', database.Transaction.created_at) == f"{month:02d}")\
+            .filter(func.strftime('%m', database.Transaction.created_at) == month_str)\
+            .filter(func.strftime('%Y', database.Transaction.created_at) == year_str)\
             .filter(database.Transaction.type == "expense")\
             .scalar() or 0.0
         
@@ -78,6 +83,34 @@ def get_categories(month: int = None, db: Session = Depends(get_db)):
             "amount": total_spent
         })
     return result
+
+@app.get("/stats/summary")
+def get_monthly_summary(month: int = None, year: int = None, db: Session = Depends(get_db)):
+    today = date.today()
+    month = month or today.month
+    year = year or today.year
+    
+    month_str = f"{month:02d}"
+    year_str = str(year)
+
+    # Фильтруем и по месяцу, и по году
+    total_income = db.query(func.sum(database.Transaction.amount))\
+        .filter(func.strftime('%m', database.Transaction.created_at) == month_str)\
+        .filter(func.strftime('%Y', database.Transaction.created_at) == year_str)\
+        .filter(database.Transaction.type == "income")\
+        .scalar() or 0.0
+
+    total_expense = db.query(func.sum(database.Transaction.amount))\
+        .filter(func.strftime('%m', database.Transaction.created_at) == month_str)\
+        .filter(func.strftime('%Y', database.Transaction.created_at) == year_str)\
+        .filter(database.Transaction.type == "expense")\
+        .scalar() or 0.0
+
+    return {
+        "profit": total_income - total_expense,
+        "total_income": total_income,
+        "total_expense": total_expense
+    }
 
 @app.post("/transactions")
 def create_transaction(tx: database.TransactionCreate, db: Session = Depends(get_db)):
@@ -167,24 +200,3 @@ def get_weekly_stats(start_date: str = None, db: Session = Depends(get_db)):
         })
         
     return result
-
-@app.get("/stats/summary")
-def get_monthly_summary(month: int = None, db: Session = Depends(get_db)):
-    if month is None:
-        month = date.today().month
-
-    total_income = db.query(func.sum(database.Transaction.amount))\
-        .filter(func.strftime('%m', database.Transaction.created_at) == f"{month:02d}")\
-        .filter(database.Transaction.type == "income")\
-        .scalar() or 0.0
-
-    total_expense = db.query(func.sum(database.Transaction.amount))\
-        .filter(func.strftime('%m', database.Transaction.created_at) == f"{month:02d}")\
-        .filter(database.Transaction.type == "expense")\
-        .scalar() or 0.0
-
-    return {
-        "profit": total_income - total_expense,
-        "total_income": total_income,
-        "total_expense": total_expense
-    }
