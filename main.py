@@ -1,36 +1,31 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
+import database # Импортируем наш файл с БД
 
-# Создаем само приложение
-app = FastAPI(
-    title="Finance Tracker API",
-    description="Бэкенд для управления финансами с ИИ-ассистентом",
-    version="0.1.0"
-)
+app = FastAPI()
 
-# 1. Простая проверка: работает ли сервер?
-@app.get("/")
-async def root():
-    return {
-        "status": "online",
-        "message": "Welcome to Finance Tracker API",
-        "docs": "/docs"
-    }
+# Зависимость для подключения к БД
+def get_db():
+    db = database.SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# 2. Пример "ручки" для получения списка категорий (пока просто мок-данные)
 @app.get("/categories")
-async def get_categories():
-    return [
-        {"id": 1, "name": "Еда", "emoji": "🍔", "color": "#FF9500"},
-        {"id": 2, "name": "Транспорт", "emoji": "🚗", "color": "#FF3B30"},
-    ]
+def read_categories(db: Session = Depends(get_db)):
+    # Берем данные из реальной базы
+    return db.query(database.Category).all()
 
-# 3. Будущая логика для твоего ИИ-агента
-@app.post("/ai/process-voice")
-async def process_voice_input(text: str):
-    # Здесь в будущем будет вызов нейросети
-    return {
-        "original_text": text,
-        "recognized_amount": 500,
-        "suggested_category": "Еда",
-        "confidence": 0.98
-    }
+@app.post("/categories")
+def create_category(cat: database.CategoryCreate, db: Session = Depends(get_db)):
+    # Превращаем данные из мобилки в модель базы данных
+    db_cat = database.Category(
+        name=cat.name,
+        emoji=cat.icon, # Сохраняем icon как emoji
+        color=cat.color
+    )
+    db.add(db_cat)
+    db.commit()
+    db.refresh(db_cat)
+    return db_cat
