@@ -14,3 +14,15 @@ __pycache__/
 
 *.db
 *.sqlite3
+
+.pytest_cache/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+*.sqlite
+
+*.log
