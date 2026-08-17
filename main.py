@@ -1,20 +1,19 @@
 import logging
+from datetime import date, datetime, timedelta
+from typing import List, Optional, Dict, Any
+
 import bcrypt
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract 
-from datetime import date, datetime, timedelta
+from sqlalchemy import func, extract
 from passlib.context import CryptContext
 from jose import jwt, JWTError
-from typing import List, Optional
 from pydantic import BaseModel
 
-from config import settings
 import database
+from config import settings
 
-# --- КОСТЫЛИ И ЛОГИ ---
-# Исправляем баг bcrypt в Python 3.12
 if not hasattr(bcrypt, "__about__"):
     bcrypt.__about__ = type('About', (object,), {'__version__': bcrypt.__version__})
 
@@ -22,28 +21,28 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Finance Tracker API")
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- СХЕМЫ ДАННЫХ (Pydantic) ---
 
 class UserAuth(BaseModel):
     username: str
     password: str
 
-class SyncData(BaseModel):
-    accounts: List[dict]
-    categories: List[dict]
-    transactions: List[dict]
 
-# --- ЛОГИКА АВТОРИЗАЦИИ ---
+class SyncData(BaseModel):
+    accounts: List[Dict[str, Any]]
+    categories: List[Dict[str, Any]]
+    transactions: List[Dict[str, Any]]
+
 
 def get_db():
     db = database.SessionLocal()
@@ -52,33 +51,43 @@ def get_db():
     finally:
         db.close()
 
-def hash_password(password: str):
+
+def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
-def verify_password(plain_password, hashed_password):
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
-def create_access_token(data: dict):
+
+def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(days=settings.ACCESS_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-def get_current_user_id(authorization: str = Header(None)):
-    """Извлекает ID пользователя из JWT токена в заголовке Authorization"""
+
+def get_current_user_id(authorization: str = Header(None)) -> int:
     if not authorization:
-        raise HTTPException(status_code=401, detail="Отсутствует заголовок авторизации")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail="Authorization header missing"
+        )
     try:
         token = authorization.split(" ")[1]
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id: int = payload.get("user_id")
         if user_id is None:
-            raise HTTPException(status_code=401, detail="Невалидный токен")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         return user_id
     except (JWTError, IndexError):
-        raise HTTPException(status_code=401, detail="Ошибка авторизации")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
 
-# --- ИНИЦИАЛИЗАЦИЯ (SEEDING) ---
+
+def get_user_account_ids(db: Session, user_id: int) -> List[int]:
+    accounts = db.query(database.Account.id).filter(database.Account.user_id == user_id).all()
+    return [acc.id for acc in accounts]
+
 
 def seed_db(db: Session):
     if db.query(database.Category).count() == 0:
@@ -91,11 +100,11 @@ def seed_db(db: Session):
             {"name": "Развлечения", "emoji": "🍿", "color": "#AF52DE"},
             {"name": "Одежда", "emoji": "👕", "color": "#FF2D55"},
         ]
-        for cat in default_categories:
-            db_cat = database.Category(name=cat["name"], emoji=cat["emoji"], color=cat["color"])
-            db.add(db_cat)
+        for category_data in default_categories:
+            category = database.Category(**category_data)
+            db.add(category)
         db.commit()
-        logger.info("✅ Системные категории созданы")
+
 
 @app.on_event("startup")
 def startup_event():
@@ -105,13 +114,12 @@ def startup_event():
     finally:
         db.close()
 
-# --- ЭНДПОИНТЫ АВТОРИЗАЦИИ ---
 
 @app.post("/auth/register")
 def register(user: UserAuth, db: Session = Depends(get_db)):
-    existing_user = db.query(database.User).filter(database.User.username == user.username).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Этот логин уже занят")
+    user_exists = db.query(database.User).filter(database.User.username == user.username).first()
+    if user_exists:
+        raise HTTPException(status_code=400, detail="Username already registered")
     
     new_user = database.User(
         username=user.username,
@@ -121,170 +129,232 @@ def register(user: UserAuth, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
     
-    db.add_all([
+    default_accounts = [
         database.Account(name="Карта", balance=0.0, user_id=new_user.id),
         database.Account(name="Наличные", balance=0.0, user_id=new_user.id)
-    ])
+    ]
+    db.add_all(default_accounts)
     db.commit()
     
     token = create_access_token({"user_id": new_user.id})
     return {"access_token": token, "token_type": "bearer", "username": new_user.username}
 
+
 @app.post("/auth/login")
 def login(user_data: UserAuth, db: Session = Depends(get_db)):
     user = db.query(database.User).filter(database.User.username == user_data.username).first()
     if not user or not verify_password(user_data.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
     
     token = create_access_token({"user_id": user.id})
     return {"access_token": token, "token_type": "bearer", "username": user.username}
 
+
 @app.post("/auth/sync")
 def sync_data(data: SyncData, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    for local_acc in data.accounts:
-        db_acc = db.query(database.Account).filter(
+    for local_account in data.accounts:
+        db_account = db.query(database.Account).filter(
             database.Account.user_id == user_id, 
-            database.Account.name == local_acc['name']
+            database.Account.name == local_account['name']
         ).first()
-        if db_acc:
-            db_acc.balance += local_acc['balance']
+        if db_account:
+            db_account.balance += local_account['balance']
     
-    for local_tx in data.transactions:
-        db_cat = db.query(database.Category).filter(database.Category.name == local_tx.get('category_name')).first()
-        db_acc = db.query(database.Account).filter(database.Account.user_id == user_id, database.Account.name == local_tx.get('account_name')).first()
+    for local_transaction in data.transactions:
+        category = db.query(database.Category).filter(
+            database.Category.name == local_transaction.get('category_name')
+        ).first()
         
-        if db_acc:
-            new_tx = database.Transaction(
-                amount=local_tx['amount'],
-                type=local_tx.get('type', 'expense'),
-                note=local_tx.get('note'),
-                account_id=db_acc.id,
-                category_id=db_cat.id if db_cat else None,
+        account = db.query(database.Account).filter(
+            database.Account.user_id == user_id, 
+            database.Account.name == local_transaction.get('account_name')
+        ).first()
+        
+        if account:
+            new_transaction = database.Transaction(
+                amount=local_transaction['amount'],
+                type=local_transaction.get('type', 'expense'),
+                note=local_transaction.get('note'),
+                account_id=account.id,
+                category_id=category.id if category else None,
                 created_at=datetime.utcnow()
             )
-            db.add(new_tx)
+            db.add(new_transaction)
     
     db.commit()
     return {"status": "success"}
+
 
 @app.get("/accounts")
 def get_accounts(user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     return db.query(database.Account).filter(database.Account.user_id == user_id).all()
 
-@app.get("/categories")
-def get_categories(month: int = None, year: int = None, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    m = month or date.today().month
-    y = year or date.today().year
 
-    categories = db.query(database.Category).all()
-    user_acc_ids = [a.id for a in db.query(database.Account.id).filter(database.Account.user_id == user_id).all()]
+@app.get("/categories")
+def get_categories(
+    month: Optional[int] = None, 
+    year: Optional[int] = None, 
+    user_id: int = Depends(get_current_user_id), 
+    db: Session = Depends(get_db)
+):
+    target_month = month or date.today().month
+    target_year = year or date.today().year
     
-    result = []
-    for cat in categories:
+    categories = db.query(database.Category).all()
+    user_account_ids = get_user_account_ids(db, user_id)
+    
+    response = []
+    for category in categories:
         total_spent = db.query(func.sum(database.Transaction.amount))\
-            .filter(database.Transaction.category_id == cat.id)\
-            .filter(database.Transaction.account_id.in_(user_acc_ids))\
-            .filter(extract('month', database.Transaction.created_at) == m)\
-            .filter(extract('year', database.Transaction.created_at) == y)\
+            .filter(database.Transaction.category_id == category.id)\
+            .filter(database.Transaction.account_id.in_(user_account_ids))\
+            .filter(extract('month', database.Transaction.created_at) == target_month)\
+            .filter(extract('year', database.Transaction.created_at) == target_year)\
             .filter(database.Transaction.type == "expense")\
             .scalar() or 0.0
         
-        result.append({
-            "id": cat.id, "name": cat.name, "emoji": cat.emoji, "color": cat.color, "amount": total_spent
+        response.append({
+            "id": category.id,
+            "name": category.name,
+            "emoji": category.emoji,
+            "color": category.color,
+            "amount": total_spent
         })
-    return result
+    return response
+
 
 @app.post("/transactions")
-def create_transaction(tx: database.TransactionCreate, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    account = db.query(database.Account).filter(database.Account.id == tx.account_id, database.Account.user_id == user_id).first()
+def create_transaction(
+    transaction_data: database.TransactionCreate, 
+    user_id: int = Depends(get_current_user_id), 
+    db: Session = Depends(get_db)
+):
+    account = db.query(database.Account).filter(
+        database.Account.id == transaction_data.account_id, 
+        database.Account.user_id == user_id
+    ).first()
+    
     if not account:
-        raise HTTPException(status_code=404, detail="Счет не найден")
+        raise HTTPException(status_code=404, detail="Account not found")
 
-    tx_date = datetime.strptime(tx.date, '%Y-%m-%d') if tx.date else datetime.utcnow()
-
-    if tx.type == "expense":
-        account.balance -= tx.amount
+    if transaction_data.date:
+        transaction_date = datetime.strptime(transaction_data.date, '%Y-%m-%d')
     else:
-        account.balance += tx.amount
+        transaction_date = datetime.utcnow()
 
-    db_tx = database.Transaction(
-        amount=tx.amount, account_id=tx.account_id, category_id=tx.category_id,
-        type=tx.type, note=tx.note, created_at=tx_date
+    if transaction_data.type == "expense":
+        account.balance -= transaction_data.amount
+    else:
+        account.balance += transaction_data.amount
+
+    new_transaction = database.Transaction(
+        amount=transaction_data.amount,
+        account_id=transaction_data.account_id,
+        category_id=transaction_data.category_id,
+        type=transaction_data.type,
+        note=transaction_data.note,
+        created_at=transaction_date
     )
-    db.add(db_tx)
+    db.add(new_transaction)
     db.commit()
-    db.refresh(db_tx)
+    db.refresh(new_transaction)
+    
     return {"status": "success", "new_balance": account.balance}
 
+
 @app.get("/stats/weekly")
-def get_weekly_stats(start_date: str = None, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+def get_weekly_stats(
+    start_date: Optional[str] = None, 
+    user_id: int = Depends(get_current_user_id), 
+    db: Session = Depends(get_db)
+):
     if start_date:
-        dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+        base_date = datetime.strptime(start_date, '%Y-%m-%d').date()
     else:
-        dt = date.today()
+        base_date = date.today()
     
-    monday = dt - timedelta(days=dt.weekday())
-    user_acc_ids = [a.id for a in db.query(database.Account.id).filter(database.Account.user_id == user_id).all()]
+    monday = base_date - timedelta(days=base_date.weekday())
+    user_account_ids = get_user_account_ids(db, user_id)
     
-    day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    result = []
+    day_labels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    weekly_data = []
 
     for i in range(7):
         current_day = monday + timedelta(days=i)
-        txs = db.query(database.Transaction).filter(
+        transactions = db.query(database.Transaction).filter(
             func.date(database.Transaction.created_at) == current_day,
-            database.Transaction.account_id.in_(user_acc_ids),
+            database.Transaction.account_id.in_(user_account_ids),
             database.Transaction.type == "expense"
         ).all()
 
-        segments_map = {}
-        for t in txs:
-            color = t.category.color if t.category else "#CCC"
-            if t.category_id not in segments_map:
-                segments_map[t.category_id] = {"amount": 0, "color": color}
-            segments_map[t.category_id]["amount"] += t.amount
+        segments = {}
+        for tx in transactions:
+            color = tx.category.color if tx.category else "#CCC"
+            if tx.category_id not in segments:
+                segments[tx.category_id] = {"amount": 0, "color": color}
+            segments[tx.category_id]["amount"] += tx.amount
 
-        result.append({
-            "label": day_names[i],
+        weekly_data.append({
+            "label": day_labels[i],
             "date": current_day.strftime("%d.%m"),
-            "segments": [{"categoryId": str(cid), "amount": d["amount"], "color": d["color"]} for cid, d in segments_map.items()],
-            "transactions": [{
-                "id": str(t.id),
-                "categoryName": t.category.name if t.category else "Без категории",
-                "amount": t.amount,
-                "color": t.category.color if t.category else "#8E8E93",
-                "note": t.note,
-                "time": t.created_at.strftime("%H:%M")
-            } for t in txs]
+            "segments": [
+                {"categoryId": str(cid), "amount": val["amount"], "color": val["color"]} 
+                for cid, val in segments.items()
+            ],
+            "transactions": [
+                {
+                    "id": str(tx.id),
+                    "categoryName": tx.category.name if tx.category else "Без категории",
+                    "amount": tx.amount,
+                    "color": tx.category.color if tx.category else "#8E8E93",
+                    "note": tx.note,
+                    "time": tx.created_at.strftime("%H:%M")
+                } for tx in transactions
+            ]
         })
-    return result
+    return weekly_data
+
 
 @app.get("/stats/summary")
-def get_monthly_summary(month: int = None, year: int = None, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    m = month or date.today().month
-    y = year or date.today().year
-    user_acc_ids = [a.id for a in db.query(database.Account.id).filter(database.Account.user_id == user_id).all()]
+def get_monthly_summary(
+    month: Optional[int] = None, 
+    year: Optional[int] = None, 
+    user_id: int = Depends(get_current_user_id), 
+    db: Session = Depends(get_db)
+):
+    target_month = month or date.today().month
+    target_year = year or date.today().year
+    user_account_ids = get_user_account_ids(db, user_id)
 
-    inc = db.query(func.sum(database.Transaction.amount)).filter(
-        extract('month', database.Transaction.created_at) == m,
-        extract('year', database.Transaction.created_at) == y,
-        database.Transaction.account_id.in_(user_acc_ids),
+    income = db.query(func.sum(database.Transaction.amount)).filter(
+        extract('month', database.Transaction.created_at) == target_month,
+        extract('year', database.Transaction.created_at) == target_year,
+        database.Transaction.account_id.in_(user_account_ids),
         database.Transaction.type == "income"
     ).scalar() or 0.0
 
-    exp = db.query(func.sum(database.Transaction.amount)).filter(
-        extract('month', database.Transaction.created_at) == m,
-        extract('year', database.Transaction.created_at) == y,
-        database.Transaction.account_id.in_(user_acc_ids),
+    expenses = db.query(func.sum(database.Transaction.amount)).filter(
+        extract('month', database.Transaction.created_at) == target_month,
+        extract('year', database.Transaction.created_at) == target_year,
+        database.Transaction.account_id.in_(user_account_ids),
         database.Transaction.type == "expense"
     ).scalar() or 0.0
 
-    return {"profit": inc - exp, "total_income": inc, "total_expense": exp}
+    return {
+        "profit": income - expenses,
+        "total_income": income,
+        "total_expense": expenses
+    }
+
 
 @app.get("/transactions/history")
-def get_transactions_history(month: int, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    user_acc_ids = [a.id for a in db.query(database.Account.id).filter(database.Account.user_id == user_id).all()]
+def get_transactions_history(
+    month: int, 
+    user_id: int = Depends(get_current_user_id), 
+    db: Session = Depends(get_db)
+):
+    user_account_ids = get_user_account_ids(db, user_id)
     return db.query(database.Transaction).filter(
         extract('month', database.Transaction.created_at) == month,
-        database.Transaction.account_id.in_(user_acc_ids)
+        database.Transaction.account_id.in_(user_account_ids)
     ).order_by(database.Transaction.created_at.desc()).all()
