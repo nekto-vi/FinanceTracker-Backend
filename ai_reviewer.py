@@ -22,7 +22,15 @@ def post_comment(comment):
     pr_number = os.getenv("PR_NUMBER")
     url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
     headers = {"Authorization": f"token {os.getenv('GH_TOKEN')}"}
-    requests.post(url, json={"body": comment}, headers=headers)
+    
+    response = requests.post(url, json={"body": comment}, headers=headers)
+    
+    print(f"Попытка отправить комментарий на {url}")
+    print(f"Статус ответа GitHub: {response.status_code}")
+    if response.status_code != 201:
+        print(f"Ошибка от GitHub: {response.text}")
+    else:
+        print("✅ Комментарий успешно опубликован!")
 
 try:
     diff = get_pr_diff()
