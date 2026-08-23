@@ -22,13 +22,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install google-genai requests
+          pip install google-generativeai requests
 
       - name: Run AI Review
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # Используем системный токен, он надежнее
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python ai_reviewer.py
