@@ -1,17 +1,20 @@
 import os
 import requests
-import google.generativeai as genai
+from google import genai 
 
-# Настройка ИИ
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-1.5-flash')
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_pr_diff():
     repo = os.getenv("GITHUB_REPOSITORY")
     pr_number = os.getenv("PR_NUMBER")
     url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
-    headers = {"Authorization": f"token {os.getenv('GH_TOKEN')}", "Accept": "application/vnd.github.v3.diff"}
+    headers = {
+        "Authorization": f"token {os.getenv('GH_TOKEN')}",
+        "Accept": "application/vnd.github.v3.diff"
+    }
     response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        raise Exception(f"Не удалось получить diff: {response.status_code}")
     return response.text
 
 def post_comment(comment):
@@ -21,19 +24,35 @@ def post_comment(comment):
     headers = {"Authorization": f"token {os.getenv('GH_TOKEN')}"}
     requests.post(url, json={"body": comment}, headers=headers)
 
-diff = get_pr_diff()
+try:
+    diff = get_pr_diff()
 
-prompt = f"""
-Ты — опытный Python разработчик и эксперт по FastAPI. 
-Проведи Code Review этого Pull Request. 
-1. Напиши краткое резюме изменений.
-2. Найди потенциальные баги или плохие практики.
-3. Предложи улучшения (Clean Code, DRY, PEP8).
-Отвечай на русском языке в стиле Markdown.
+    if not diff.strip():
+        print("Изменений не найдено.")
+        exit(0)
 
-ИЗМЕНЕНИЯ (DIFF):
-{diff}
-"""
+    prompt = f"""
+    Ты — Senior Python разработчик. Проведи ревью кода (diff) ниже.
+    Твоя задача:
+    1. Найди критические ошибки или баги.
+    2. Укажи на нарушение PEP8 или плохую типизацию.
+    3. Предложи, как сделать код короче и понятнее.
+    
+    Пиши кратко и по делу. Используй Markdown (заголовки, списки).
+    Отвечай на русском языке.
 
-response = model.generate_content(prompt)
-post_comment(f"## 🤖 AI Code Review\n\n{response.text}")
+    ИЗМЕНЕНИЯ В КОДЕ:
+    {diff}
+    """
+
+    response = client.models.generate_content(
+        model='gemini-1.5-flash',
+        contents=prompt
+    )
+
+    review_text = f"### 🤖 AI Code Review\n\n{response.text}"
+    post_comment(review_text)
+    print("✅ Ревью успешно опубликовано.")
+
+except Exception as e:
+    print(f"❌ Ошибка: {e}")
