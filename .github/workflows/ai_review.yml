@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         run: |
           pip install google-genai requests
@@ -22,6 +27,7 @@ jobs:
       - name: Run AI Review
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Используем системный токен, он надежнее
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
