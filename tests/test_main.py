@@ -17,6 +17,20 @@ def test_login_user(client):
     assert response.status_code == 200
     assert "access_token" in response.json()
 
+def test_create_category(client):
+    reg_res = client.post("/auth/register", json={"username": "category_user", "password": "123"})
+    headers = {"Authorization": f"Bearer {reg_res.json()['access_token']}"}
+
+    response = client.post(
+        "/categories",
+        headers=headers,
+        json={"name": "Собака", "emoji": "🐶", "color": "#D1D1D1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Собака"
+    assert response.json()["emoji"] == "🐶"
+
 def test_transaction_updates_balance(client):
     reg_res = client.post("/auth/register", json={"username": "wallet_user", "password": "123"})
     token = reg_res.json()["access_token"]
