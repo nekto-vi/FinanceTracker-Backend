@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime, Text
+from sqlalchemy import create_engine, Integer, String, Float, ForeignKey, DateTime, Text
 from sqlalchemy.orm import sessionmaker, relationship, DeclarativeBase, Mapped, mapped_column
 from pydantic import BaseModel, ConfigDict
 
@@ -11,11 +11,12 @@ from config import settings
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, 
+    SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in SQLALCHEMY_DATABASE_URL else {}
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 class Base(DeclarativeBase):
     """Базовый класс для всех моделей"""
@@ -51,6 +52,7 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     emoji: Mapped[Optional[str]] = mapped_column(String(20))
     color: Mapped[Optional[str]] = mapped_column(String(20))
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
 
     transactions: Mapped[List["Transaction"]] = relationship("Transaction", back_populates="category")
 
@@ -75,7 +77,7 @@ class CategoryCreate(BaseModel):
     name: str
     emoji: str
     color: str
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -89,8 +91,10 @@ class TransactionCreate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+
 
 if __name__ == "__database__":
     init_db()
