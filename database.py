@@ -88,10 +88,9 @@ class Transaction(Base):
 
 class CategoryCreate(BaseModel):
     name: str
-    emoji: str
+    emoji: Optional[str] = None
+    icon: Optional[str] = None
     color: str
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class TransactionCreate(BaseModel):
