@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime, Text
+from sqlalchemy import create_engine, Integer, String, Float, ForeignKey, DateTime, Text
 from sqlalchemy.orm import sessionmaker, relationship, DeclarativeBase, Mapped, mapped_column
 from pydantic import BaseModel, ConfigDict
 
@@ -11,11 +11,12 @@ from config import settings
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, 
+    SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in SQLALCHEMY_DATABASE_URL else {}
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 class Base(DeclarativeBase):
     """Базовый класс для всех моделей"""
@@ -30,6 +31,19 @@ class User(Base):
     hashed_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     accounts: Mapped[List["Account"]] = relationship("Account", back_populates="owner", cascade="all, delete-orphan")
+    chat_messages: Mapped[List["ChatMessage"]] = relationship("ChatMessage", back_populates="owner", cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    owner: Mapped["User"] = relationship("User", back_populates="chat_messages")
 
 
 class Account(Base):
@@ -51,6 +65,7 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     emoji: Mapped[Optional[str]] = mapped_column(String(20))
     color: Mapped[Optional[str]] = mapped_column(String(20))
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
 
     transactions: Mapped[List["Transaction"]] = relationship("Transaction", back_populates="category")
 
@@ -73,10 +88,9 @@ class Transaction(Base):
 
 class CategoryCreate(BaseModel):
     name: str
-    emoji: str
+    emoji: Optional[str] = None
+    icon: Optional[str] = None
     color: str
-    
-    model_config = ConfigDict(from_attributes=True)
 
 
 class TransactionCreate(BaseModel):
@@ -89,8 +103,10 @@ class TransactionCreate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+
 
 if __name__ == "__database__":
     init_db()
