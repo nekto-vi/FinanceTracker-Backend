@@ -54,6 +54,10 @@ class UserAuth(BaseModel):
 class AIRequest(BaseModel):
     text: str
 
+class ChatMessageCreate(BaseModel):
+    role: str
+    text: str
+
 # --- ЛОГИКА АВТОРИЗАЦИИ ---
 def get_db():
     db = database.SessionLocal()
@@ -109,6 +113,37 @@ def ensure_default_categories(db: Session):
 
 
 # --- ИИ АГЕНТ ---
+
+def save_chat_message(db: Session, user_id: int, role: str, message_text: str):
+    if role not in ("user", "assistant") or not message_text.strip():
+        return
+    db.add(database.ChatMessage(user_id=user_id, role=role, text=message_text.strip()))
+
+
+@app.get("/ai/messages")
+def get_ai_messages(user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    messages = db.query(database.ChatMessage).filter(
+        database.ChatMessage.user_id == user_id
+    ).order_by(database.ChatMessage.created_at.asc(), database.ChatMessage.id.asc()).all()
+    return [
+        {"id": str(message.id), "role": message.role, "text": message.text,
+         "createdAt": int(message.created_at.timestamp() * 1000)}
+        for message in messages
+    ]
+
+
+@app.post("/ai/messages")
+def create_ai_message(message: ChatMessageCreate, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    if message.role not in ("user", "assistant"):
+        raise HTTPException(status_code=400, detail="Неверная роль сообщения")
+    if not message.text.strip():
+        raise HTTPException(status_code=400, detail="Пустое сообщение")
+    db_message = database.ChatMessage(user_id=user_id, role=message.role, text=message.text.strip())
+    db.add(db_message)
+    db.commit()
+    db.refresh(db_message)
+    return {"id": str(db_message.id), "role": db_message.role, "text": db_message.text,
+            "createdAt": int(db_message.created_at.timestamp() * 1000)}
 
 def parse_ai_json_response(raw_text: str) -> dict:
     text = raw_text.strip()
@@ -175,6 +210,7 @@ def generate_ai_json(prompt: str) -> str:
 
 @app.post("/ai/process")
 async def process_ai_transaction(req: AIRequest, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    save_chat_message(db, user_id, "user", req.text)
     # 1. Получаем текущие категории и счета юзера
     categories = db.query(database.Category).filter(
         (database.Category.user_id == user_id) | (database.Category.user_id.is_(None))
@@ -229,6 +265,9 @@ async def process_ai_transaction(req: AIRequest, user_id: int = Depends(get_curr
         if not account:
             account = accounts[0]
 
+        ai_data["account_id"] = account.id
+        ai_data["category_id"] = category.id if category else None
+
         account.balance -= ai_data["amount"]
 
         db_tx = database.Transaction(
@@ -240,11 +279,16 @@ async def process_ai_transaction(req: AIRequest, user_id: int = Depends(get_curr
             created_at=datetime.strptime(ai_data["date"], '%Y-%m-%d')
         )
         db.add(db_tx)
+        save_chat_message(db, user_id, "assistant", f"Записал расход {ai_data['amount']} BYN на {ai_data['note']}")
         db.commit()
         
         return {"status": "success", "data": ai_data}
 
     except Exception as e:
+        db.rollback()
+        save_chat_message(db, user_id, "user", req.text)
+        save_chat_message(db, user_id, "assistant", "ИИ не смог распознать запрос. Попробуйте проще.")
+        db.commit()
         logger.error(f"AI error: {e}")
         raise HTTPException(status_code=500, detail="ИИ не смог распознать запрос. Попробуйте проще.")
 

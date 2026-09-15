@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest httpx  # Устанавливаем инструменты тестирования
+          pip install pytest httpx  
 
       - name: Run tests with pytest
         env:

@@ -31,6 +31,19 @@ class User(Base):
     hashed_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     accounts: Mapped[List["Account"]] = relationship("Account", back_populates="owner", cascade="all, delete-orphan")
+    chat_messages: Mapped[List["ChatMessage"]] = relationship("ChatMessage", back_populates="owner", cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    owner: Mapped["User"] = relationship("User", back_populates="chat_messages")
 
 
 class Account(Base):
