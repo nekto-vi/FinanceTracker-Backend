@@ -73,6 +73,4 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `POST /ai/messages` — сохранение сообщения в чат
 
 ## Связь с Frontend
-Клиентская часть приложения находится в репозитории [nekto-vi/FinanceTracker](https://github.com/nekto-vi/FinanceTracker). Для подключения мобильного приложения укажите адрес бэкенда (`http://10.0.2.2:8000` для эмулятора или реальный IP-адрес хоста).
-
-
+Клиентская часть приложения находится в репозитории [nekto-vi/FinanceTracker](https://github.com/nekto-vi/FinanceTracker).
